@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SKILL_NAME: distinctive-naming
+  RELEASE_TAG: latest
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package skill
+        run: |
+          mkdir -p dist "stage/$SKILL_NAME"
+          cp -R SKILL.md LICENSE README.md references scripts "stage/$SKILL_NAME/"
+          find stage -name '__pycache__' -prune -exec rm -rf {} +
+          find stage -name '.DS_Store' -delete
+          (cd stage && zip -r -X "../dist/$SKILL_NAME.zip" "$SKILL_NAME")
+          cp "dist/$SKILL_NAME.zip" "dist/$SKILL_NAME.skill"
+          unzip -l "dist/$SKILL_NAME.skill"
+
+      - name: Move the release tag to this commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$RELEASE_TAG"
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short="${GITHUB_SHA::7}"
+          notes="Automated build of \`$SKILL_NAME\` from commit $GITHUB_SHA.
+
+          - \`$SKILL_NAME.skill\`: install as a skill package
+          - \`$SKILL_NAME.zip\`: same contents as a plain zip"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "Latest ($short)" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" --title "Latest ($short)" --notes "$notes" --latest
+          fi
+          gh release upload "$RELEASE_TAG" "dist/$SKILL_NAME.zip" "dist/$SKILL_NAME.skill" --clobber
